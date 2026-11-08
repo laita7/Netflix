@@ -1,10 +1,11 @@
 <!doctype html><html><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mis Películas Favoritas</title>
     <link href="https://fonts.googleapis.com/css?family=Roboto&display=swap" rel="stylesheet">
     <style>
-        body { --primary: #6200ee; --secondary: #29b6f6; margin: 0px;}
+        body { --primary: #6200ee; --secondary: #29b6f6; --error: #c62828; --ok: #2e7d32; margin: 0px;}
         * {font-family: 'Roboto', sans-serif;}
-        button { 
+        button {
             -webkit-font-smoothing: antialiased;
             display: inline-block;
             text-decoration: none;
@@ -24,13 +25,62 @@
         h1 {background: var(--primary); color: white; font-weight: 300; text-transform: uppercase; font-size: 20px; margin: 0px; padding: 15px;}
         h2 { margin-block-start: 0px; margin-block-end: 10px; font-size: 20px;  color: var(--primary);}
         button:hover { background: var(--primary); color: white; }
+        button:disabled, button:disabled:hover { color: #999; border-color: #ccc; background: #f5f5f5; cursor: not-allowed; }
         div.actions { margin-top: 10px;}
         div.movie {display: inline-block; width: auto; padding: 10px; box-shadow: 2px 2px 7px #ccc; margin: 5px;}
         div.movie div.movie-img {width: 200px; height: 200px; cursor: pointer;}
         div.movie div.movie-img img {width: 100%; height: 100%; object-fit: cover;}
         div.movie div.title {text-align: center; overflow: hidden; text-overflow: ellipsis; width: 200px; white-space: nowrap; }
         div.field {color: var(--primary); text-transform: uppercase; font-size: 12px;}
+
+        /* ---------- BÚSQUEDA EN TMDb ---------- */
+        p.hint {font-size: 13px; color: #555; margin: 0 0 10px 0;}
+        div.search-box {display: flex; flex-wrap: wrap; align-items: center; gap: 4px;}
+        div.search-box input {flex: 1 1 220px; max-width: 420px; margin: 0; font-size: 14px; padding: 6px 8px;
+                              border: 1px solid #bbb; transition: border-color 0.2s ease, box-shadow 0.2s ease;}
+        div.search-box input:focus {outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);}
+        div.search-box button {height: 30px; font-size: 11px;}
+
+        /* Mensajes: aparecen con una transición de opacidad (tema 3.3) */
+        div.msg {margin: 12px 0; padding: 8px 12px; font-size: 13px; border-left: 4px solid var(--secondary);
+                 background: #e1f5fe; animation: fadeIn 0.3s ease both;}
+        div.msg-error {border-color: var(--error); background: #ffebee; color: var(--error);}
+        div.msg-ok    {border-color: var(--ok);    background: #e8f5e9; color: var(--ok);}
+        div.msg code  {background: rgba(0,0,0,0.06); padding: 0 3px;}
+        div.msg button {vertical-align: middle; margin-left: 6px;}
+
+        /* Indicador de carga: animación con @keyframes */
+        span.spinner {display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px;
+                      border: 2px solid #b3e5fc; border-top-color: var(--primary); border-radius: 50%;
+                      animation: spin 0.8s linear infinite;}
+
+        /* Resultados en cuadrícula */
+        div.results {display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px;}
+        div.result {display: flex; flex-direction: column; box-shadow: 2px 2px 7px #ccc; background: white;
+                    animation: fadeUp 0.4s ease-out backwards;
+                    transition: transform 0.2s ease, box-shadow 0.2s ease;}
+        div.result:hover {transform: translateY(-4px); box-shadow: 3px 6px 14px #bbb;}
+        div.result-img {position: relative; aspect-ratio: 2 / 3; background: #eee; overflow: hidden;}
+        div.result-img img {width: 100%; height: 100%; object-fit: cover; display: block;}
+        span.badge {position: absolute; top: 6px; left: 6px; background: var(--primary); color: white;
+                    font-size: 10px; text-transform: uppercase; padding: 2px 6px;}
+        div.result-info {padding: 8px 10px 0 10px; flex: 1;}
+        div.result-title {font-weight: bold; font-size: 14px; color: #222;}
+        div.result-meta {font-size: 12px; color: var(--primary); margin-top: 3px;}
+        p.result-overview {font-size: 12px; color: #555; margin: 6px 0 0 0; line-height: 1.4;}
+        div.result div.actions {padding: 8px 10px 10px 10px;}
+        div.result button.add-from-api {width: 100%; height: 26px; font-size: 10px;}
+
+        /* Detalle (show) de películas añadidas desde TMDb */
+        p.overview {max-width: 600px; color: #444; line-height: 1.5;}
+
+        @keyframes fadeIn {from {opacity: 0;} to {opacity: 1;}}
+        @keyframes fadeUp {from {opacity: 0; transform: translateY(12px);} to {opacity: 1; transform: translateY(0);}}
+        @keyframes spin   {to {transform: rotate(360deg);}}
     </style>
+
+    <!-- Clave de la API de TMDb en un archivo independiente (no se sube al repositorio, ver .gitignore) -->
+    <script type="text/javascript" src="config.js"></script>
 
     <script type="text/javascript">
 
@@ -44,6 +94,53 @@
 
 
         localStorage.my_movies = localStorage.my_movies || JSON.stringify(initial_movies);
+
+
+        // TMDb API: CONFIGURACIÓN
+
+        const TMDB_API = 'https://api.themoviedb.org/3';
+        const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
+
+        // Último resultado de búsqueda. Los botones "añadir" guardan en data-my-id
+        // la posición de la película en este array.
+        let last_results = [];
+
+        // Devuelve la clave definida en config.js, o '' si no existe o no se ha rellenado.
+        const getToken = () => {
+            if (typeof TMDB_CONFIG === 'undefined' || !TMDB_CONFIG.token) return '';
+            const token = String(TMDB_CONFIG.token).trim();
+            return token.startsWith('PEGA_AQUI') ? '' : token;
+        };
+
+
+        // UTILIDADES
+
+        // Escapa el texto que llega de la API antes de meterlo en innerHTML.
+        const escapeHTML = (text) => String(text ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+        const truncate = (text, max) =>
+            (text && text.length > max) ? text.slice(0, max).trim() + '…' : (text || '');
+
+        // "2014-11-05" -> "5 de noviembre de 2014"
+        const formatDate = (date) => {
+            if (!date) return 'Desconocida';
+            const d = new Date(date + 'T00:00:00');
+            return isNaN(d) ? 'Desconocida'
+                : d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+        };
+
+        const posterURL = (path) => path ? TMDB_IMG + path : 'files/noimage.png';
+
+        const normalize = (text) => String(text || '').trim().toLowerCase();
+
+        // Una película de TMDb está repetida si ya hay una con el mismo id de TMDb o,
+        // en las películas creadas a mano (sin tmdb_id), si coincide el título.
+        const isDuplicate = (movies, movie) => movies.some(m => m.tmdb_id
+            ? m.tmdb_id === movie.id
+            : normalize(m.title) === normalize(movie.title) ||
+              normalize(m.title) === normalize(movie.original_title));
 
 
         // VIEWS
@@ -71,6 +168,7 @@
 
             view += `<div class="actions">
                         <button class="new">añadir</button>
+                        <button class="search-view">buscar en TMDb</button>
                         <button class="reset">restablecer</button>
                     </div>`;
 
@@ -82,17 +180,17 @@
             return `<h2>Editar película</h2>
                 <div class="field">
                 Título <br>
-                <input  type="text" id="title" placeholder="Título" 
+                <input  type="text" id="title" placeholder="Título"
                         value="${movie.title}">
                 </div>
                 <div class="field">
                 Director <br>
-                <input  type="text" id="director" placeholder="Director" 
+                <input  type="text" id="director" placeholder="Director"
                         value="${movie.director}">
                 </div>
                 <div class="field">
                 Portada <br>
-                <input  type="text" id="thumbnail" placeholder="URL de la portada" 
+                <input  type="text" id="thumbnail" placeholder="URL de la portada"
                         value="${movie.thumbnail}">
                 </div>
                 <div class="actions">
@@ -107,10 +205,14 @@
 
 
         const showView = (movie) => {
+            // Las películas añadidas desde TMDb traen además fecha de estreno y sinopsis.
+            const extra = (movie.release_date ? `<p>Estreno: <b>${formatDate(movie.release_date)}</b></p>` : '')
+                        + (movie.overview ? `<p class="overview">${escapeHTML(movie.overview)}</p>` : '');
             return `<h2>${movie.title}</h2>
              <p>
                 La película <b>${movie.title}</b> fue dirigida por <b>${movie.director}</b>.
              </p>
+             ${extra}
              <div class="actions">
                 <button class="index">Volver</button>
              </div>`;
@@ -138,8 +240,62 @@
         }
 
 
+        // Vista de búsqueda: campo de texto + botón. Los mensajes se muestran en
+        // #message y los resultados (resultsView) se insertan en #results.
+        const searchView = () => {
+            return `<h2>Buscar en TMDb</h2>
+                <p class="hint">
+                    Escribe el título de una película y pulsa <b>Buscar</b> o la tecla <b>Enter</b>.
+                    Los datos se obtienen de The Movie Database y puedes añadirlos a tu lista con un clic.
+                </p>
+                <div class="search-box">
+                    <input type="search" id="query" placeholder="Ej.: El viaje de Chihiro"
+                           maxlength="100" autocomplete="off" aria-label="Título de la película">
+                    <button class="search">Buscar</button>
+                    <button class="index">Volver</button>
+                </div>
+                <div id="message" role="status" aria-live="polite"></div>
+                <div id="results"></div>`;
+        };
 
-        // CONTROLLERS 
+
+        // Vista de resultados: una tarjeta por película con póster, título,
+        // fecha de estreno, valoración, sinopsis y botón "añadir".
+        const resultsView = (results) => {
+            const my_movies = JSON.parse(localStorage.my_movies);
+            let view = `<div class="results">`;
+
+            results.forEach((movie, i) => {
+                const title = escapeHTML(movie.title);
+                const vote  = movie.vote_count ? ` · ★ ${movie.vote_average.toFixed(1)}` : '';
+                const badge = isDuplicate(my_movies, movie) ? `<span class="badge">En tu lista</span>` : '';
+
+                view += `
+                <div class="result" style="animation-delay: ${Math.min(i, 12) * 40}ms">
+                    <div class="result-img">
+                        ${badge}
+                        <img src="${posterURL(movie.poster_path)}" alt="Póster de ${title}"
+                             loading="lazy" onerror="this.onerror=null; this.src='files/noimage.png'">
+                    </div>
+                    <div class="result-info">
+                        <div class="result-title">${title}</div>
+                        <div class="result-meta">Estreno: ${formatDate(movie.release_date)}${vote}</div>
+                        <p class="result-overview">
+                            ${escapeHTML(truncate(movie.overview, 160)) || '<em>Sin sinopsis disponible.</em>'}
+                        </p>
+                    </div>
+                    <div class="actions">
+                        <button class="add-from-api" data-my-id="${i}">añadir</button>
+                    </div>
+                </div>`;
+            });
+
+            return view + `</div>`;
+        };
+
+
+
+        // CONTROLLERS
         const indexContr = () => {
          let my_movies = JSON.parse(localStorage.my_movies);
          document.getElementById('main').innerHTML = indexView(my_movies);
@@ -199,24 +355,197 @@
         };
 
 
+        // CONTROLLERS: TMDb
+
+        // Muestra un mensaje en la vista de búsqueda. type: 'info' | 'ok' | 'error'
+        const showMessage = (html, type = 'info') => {
+            const box = document.getElementById('message');
+            if (box) box.innerHTML = html ? `<div class="msg msg-${type}">${html}</div>` : '';
+        };
+
+        // Muestra la vista de búsqueda y pone el cursor en el campo de texto.
+        const searchViewContr = () => {
+            last_results = [];
+            document.getElementById('main').innerHTML = searchView();
+            document.getElementById('query').focus();
+        };
+
+        // Letras (con tildes, ñ...), números, espacios y signos de puntuación habituales en títulos.
+        const VALID_QUERY = /^[\p{L}\p{N}\s.,:;'’"!?¿¡&()\-]+$/u;
+
+        // Valida el término de búsqueda. Lanza un Error (throw) si no es válido.
+        const validateQuery = (query) => {
+            const q = String(query || '').trim();
+            if (q === '')
+                throw new Error('Escribe el título de una película antes de buscar.');
+            if (q.length > 100)
+                throw new Error('El término de búsqueda es demasiado largo (máximo 100 caracteres).');
+            if (!VALID_QUERY.test(q))
+                throw new Error('El texto contiene caracteres no válidos. Usa solo letras, números, espacios y signos de puntuación básicos.');
+            return q;
+        };
+
+        // Hace una petición GET a la API REST de TMDb y devuelve el JSON de la respuesta.
+        // Traduce los fallos (sin clave, sin red, códigos de estado HTTP) a mensajes claros.
+        const tmdbFetch = async (path) => {
+            const token = getToken();
+            if (!token)
+                throw new Error('No se ha configurado la clave de la API de TMDb. Copia <code>config.example.js</code> ' +
+                                'como <code>config.js</code> y pega en él tu token de TMDb.');
+            if (!navigator.onLine)
+                throw new Error('No hay conexión a Internet. Conéctate y vuelve a intentarlo.');
+
+            const options = {
+                method: 'GET',
+                headers: {
+                    accept: 'application/json',
+                    Authorization: 'Bearer ' + token
+                }
+            };
+
+            let response;
+            try {
+                response = await fetch(TMDB_API + path, options);
+            } catch (err) {
+                // fetch solo rechaza la promesa si la petición no llega a hacerse (red, CORS...)
+                throw new Error('No se ha podido conectar con TMDb. Comprueba tu conexión a Internet e inténtalo de nuevo.');
+            }
+
+            // Códigos de estado del servidor (tema 3.1.2)
+            if (response.status === 401)
+                throw new Error('La clave de la API de TMDb no es válida (401 Unauthorized). Revisa el token de <code>config.js</code>: ' +
+                                'debe ser el «Token de acceso de lectura a la API».');
+            if (response.status === 404)
+                throw new Error('TMDb no ha encontrado el recurso solicitado (404 Not Found).');
+            if (response.status === 429)
+                throw new Error('Se han hecho demasiadas peticiones seguidas a TMDb (429). Espera unos segundos.');
+            if (!response.ok)
+                throw new Error(`TMDb ha respondido con un error (${response.status} ${escapeHTML(response.statusText)}). Inténtalo más tarde.`);
+
+            return response.json();
+        };
+
+        // Busca películas en TMDb y muestra los resultados con resultsView.
+        const searchContr = async (query) => {
+            const results = document.getElementById('results');
+            const button  = document.querySelector('button.search');
+            try {
+                const q = validateQuery(query);
+
+                if (button) button.disabled = true;
+                results.innerHTML = '';
+                showMessage(`<span class="spinner"></span>Buscando «${escapeHTML(q)}»…`);
+
+                const data = await tmdbFetch(`/search/movie?query=${encodeURIComponent(q)}` +
+                                             `&language=es-ES&include_adult=false&page=1`);
+                last_results = Array.isArray(data.results) ? data.results : [];
+
+                if (last_results.length === 0) {
+                    showMessage(`No se ha encontrado ninguna película con «${escapeHTML(q)}». ` +
+                                `Revisa la ortografía o prueba con otro título.`);
+                } else {
+                    const total = data.total_results > last_results.length
+                        ? `los ${last_results.length} primeros de ${data.total_results} resultados`
+                        : `${last_results.length} resultado${last_results.length === 1 ? '' : 's'}`;
+                    showMessage(`Mostrando ${total} para «${escapeHTML(q)}».`, 'ok');
+                    results.innerHTML = resultsView(last_results);
+                }
+            } catch (err) {
+                last_results = [];
+                showMessage(err.message, 'error');
+                console.error(err);
+            } finally {
+                if (button) button.disabled = false;
+            }
+        };
+
+        // Añade una película de los resultados de TMDb a la base de datos local (localStorage),
+        // con la misma estructura { title, director, thumbnail } que las creadas a mano.
+        const addFromAPIContr = async (movie, button) => {
+            if (!movie || !movie.id || !String(movie.title || '').trim()) {
+                showMessage('Los datos de esta película no son válidos y no se puede añadir.', 'error');
+                return;
+            }
+
+            const markAdded = (text) => { if (button) { button.disabled = true; button.textContent = text; } };
+
+            if (isDuplicate(JSON.parse(localStorage.my_movies), movie)) {
+                showMessage(`«${escapeHTML(movie.title)}» ya está en tu lista de películas.`);
+                markAdded('ya en tu lista');
+                return;
+            }
+
+            // Se deshabilita el botón mientras se añade para evitar dobles clics.
+            if (button) { button.disabled = true; button.textContent = 'añadiendo…'; }
+
+            try {
+                // La búsqueda no incluye el director: se pide al endpoint de créditos.
+                let director = 'Desconocido';
+                try {
+                    const credits = await tmdbFetch(`/movie/${movie.id}/credits?language=es-ES`);
+                    const directors = (credits.crew || []).filter(p => p.job === 'Director').map(p => p.name);
+                    if (directors.length > 0) director = directors.join(', ');
+                } catch (err) {
+                    console.warn('No se ha podido obtener el director:', err.message);
+                }
+
+                // Se vuelve a leer el modelo por si ha cambiado mientras se esperaba la respuesta.
+                const my_movies = JSON.parse(localStorage.my_movies);
+                if (isDuplicate(my_movies, movie)) {
+                    showMessage(`«${escapeHTML(movie.title)}» ya está en tu lista de películas.`);
+                    markAdded('ya en tu lista');
+                    return;
+                }
+
+                my_movies.push({
+                    title:        movie.title.trim(),
+                    director:     director,
+                    thumbnail:    posterURL(movie.poster_path),
+                    release_date: movie.release_date || '',
+                    overview:     movie.overview || '',
+                    tmdb_id:      movie.id
+                });
+                localStorage.my_movies = JSON.stringify(my_movies);
+
+                showMessage(`«${escapeHTML(movie.title)}» se ha añadido a tu lista. ` +
+                            `<button class="index">ver mi lista</button>`, 'ok');
+                markAdded('añadida ✓');
+            } catch (err) {
+                showMessage(`No se ha podido añadir «${escapeHTML(movie.title)}»: ${escapeHTML(err.message)}`, 'error');
+                if (button) { button.disabled = false; button.textContent = 'añadir'; }
+            }
+        };
+
+
         // EVENT ROUTER
         const matchEvent = (ev, sel) => ev.target.matches(sel);
         const myId = (ev) => Number(ev.target.dataset.myId);
 
         document.addEventListener('click', ev => {
-            if      (matchEvent(ev, '.index'))  indexContr  ();
-            else if (matchEvent(ev, '.edit'))   editContr   (myId(ev));
-            else if (matchEvent(ev, '.update')) updateContr (myId(ev));
-            else if (matchEvent(ev, '.show'))   showContr   (myId(ev));
-            else if (matchEvent(ev, '.new'))    newContr    ();
-            else if (matchEvent(ev, '.create')) createContr ();
-            else if (matchEvent(ev, '.delete')) deleteContr (myId(ev));
-            else if (matchEvent(ev, '.reset'))  resetContr  ();
+            if      (matchEvent(ev, '.index'))        indexContr      ();
+            else if (matchEvent(ev, '.edit'))         editContr       (myId(ev));
+            else if (matchEvent(ev, '.update'))       updateContr     (myId(ev));
+            else if (matchEvent(ev, '.show'))         showContr       (myId(ev));
+            else if (matchEvent(ev, '.new'))          newContr        ();
+            else if (matchEvent(ev, '.create'))       createContr     ();
+            else if (matchEvent(ev, '.delete'))       deleteContr     (myId(ev));
+            else if (matchEvent(ev, '.reset'))        resetContr      ();
+            else if (matchEvent(ev, '.search-view'))  searchViewContr ();
+            else if (matchEvent(ev, '.search'))       searchContr     (document.getElementById('query').value);
+            else if (matchEvent(ev, '.add-from-api')) addFromAPIContr (last_results[myId(ev)], ev.target);
         })
 
-        
-        
-        // Initialization        
+        // La tecla Enter en el campo de búsqueda también lanza la búsqueda.
+        document.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter' && matchEvent(ev, '#query')) {
+                ev.preventDefault();
+                searchContr(ev.target.value);
+            }
+        });
+
+
+
+        // Initialization
         document.addEventListener('DOMContentLoaded', indexContr);
     </script>
 </head>
@@ -226,6 +555,6 @@
     <h1>Mis Películas Favoritas</h1>
     <div id="main"> <!-- The view is included here --> </div>
 
-    
+
 </body>
 </html>
