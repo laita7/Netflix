@@ -41,6 +41,15 @@
         div.search-box input:focus {outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);}
         div.search-box button {height: 30px; font-size: 11px;}
 
+        /* Recuadro para pegar el token cuando no hay config.js (p. ej. en GitHub Pages) */
+        div.token-box {margin: 0 0 14px 0; padding: 10px 12px; font-size: 13px; line-height: 1.5; max-width: 640px;
+                       border: 1px dashed var(--primary); background: #f6f0ff; animation: fadeIn 0.3s ease both;}
+        div.token-box div.search-box {margin-top: 8px;}
+        div.token-box code, p.token-info code {background: rgba(0,0,0,0.06); padding: 0 3px;}
+        div.token-box a {color: var(--primary);}
+        p.token-info {font-size: 12px; color: #555; margin: 0 0 10px 0;}
+        p.token-info button {vertical-align: middle;}
+
         /* Mensajes: aparecen con una transición de opacidad (tema 3.3) */
         div.msg {margin: 12px 0; padding: 8px 12px; font-size: 13px; border-left: 4px solid var(--secondary);
                  background: #e1f5fe; animation: fadeIn 0.3s ease both;}
@@ -105,12 +114,25 @@
         // la posición de la película en este array.
         let last_results = [];
 
-        // Devuelve la clave definida en config.js, o '' si no existe o no se ha rellenado.
-        const getToken = () => {
+        // Clave definida en config.js (solo existe en local, no se sube al repositorio).
+        const configToken = () => {
             if (typeof TMDB_CONFIG === 'undefined' || !TMDB_CONFIG.token) return '';
             const token = String(TMDB_CONFIG.token).trim();
             return token.startsWith('PEGA_AQUI') ? '' : token;
         };
+
+        // Clave pegada por el usuario en la vista de búsqueda. Se guarda solo en el
+        // localStorage de su navegador, para poder usar la versión publicada (GitHub Pages),
+        // que no tiene config.js.
+        const storedToken = () => {
+            try { return localStorage.tmdb_token || ''; } catch (e) { return ''; }
+        };
+
+        // config.js tiene prioridad sobre el token guardado en el navegador.
+        const getToken = () => configToken() || storedToken();
+
+        // 'config' | 'local' | '' (sin clave)
+        const tokenSource = () => configToken() ? 'config' : (storedToken() ? 'local' : '');
 
 
         // UTILIDADES
@@ -244,6 +266,7 @@
         // #message y los resultados (resultsView) se insertan en #results.
         const searchView = () => {
             return `<h2>Buscar en TMDb</h2>
+                <div id="token-panel">${tokenView()}</div>
                 <p class="hint">
                     Escribe el título de una película y pulsa <b>Buscar</b> o la tecla <b>Enter</b>.
                     Los datos se obtienen de The Movie Database y puedes añadirlos a tu lista con un clic.
@@ -256,6 +279,30 @@
                 </div>
                 <div id="message" role="status" aria-live="polite"></div>
                 <div id="results"></div>`;
+        };
+
+
+        // Recuadro de la clave de la API. Solo pide el token si no hay ninguno configurado.
+        const tokenView = () => {
+            const source = tokenSource();
+            if (source === 'config') return '';
+            if (source === 'local') return `
+                <p class="token-info">
+                    Usando el token de TMDb guardado en este navegador.
+                    <button class="clear-token">olvidar token</button>
+                </p>`;
+            return `
+                <div class="token-box">
+                    <b>Falta la clave de la API de TMDb.</b>
+                    Pega tu <em>Token de acceso de lectura a la API</em> (empieza por <code>eyJ</code>). Lo encontrarás en
+                    <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb → Configuración → API</a>.
+                    Se guarda solo en este navegador y no se envía a ningún sitio salvo a TMDb.
+                    <div class="search-box">
+                        <input type="password" id="token" placeholder="eyJhbGciOiJIUzI1NiJ9..." autocomplete="off"
+                               aria-label="Token de la API de TMDb">
+                        <button class="save-token">guardar token</button>
+                    </div>
+                </div>`;
         };
 
 
@@ -363,11 +410,48 @@
             if (box) box.innerHTML = html ? `<div class="msg msg-${type}">${html}</div>` : '';
         };
 
-        // Muestra la vista de búsqueda y pone el cursor en el campo de texto.
+        // Muestra la vista de búsqueda y pone el cursor en el campo adecuado.
         const searchViewContr = () => {
             last_results = [];
             document.getElementById('main').innerHTML = searchView();
+            (document.getElementById('token') || document.getElementById('query')).focus();
+        };
+
+        // Guarda en el localStorage del navegador el token pegado por el usuario.
+        const saveTokenContr = (value) => {
+            const token = String(value || '').trim().replace(/^Bearer\s+/i, '');
+            if (token === '') {
+                showMessage('Pega el token antes de pulsar «guardar token».', 'error');
+                return;
+            }
+            if (/^[0-9a-f]{32}$/i.test(token)) {
+                showMessage('Esa es la <em>Clave de la API</em> corta. Pega el <em>Token de acceso de lectura a la API</em>, ' +
+                            'el largo que empieza por <code>eyJ</code>.', 'error');
+                return;
+            }
+            if (!/^\S{30,}$/.test(token)) {
+                showMessage('El token no parece válido: debe ser un texto largo, sin espacios, que empieza por <code>eyJ</code>.', 'error');
+                return;
+            }
+            try {
+                localStorage.tmdb_token = token;
+            } catch (e) {
+                showMessage('No se ha podido guardar el token en este navegador.', 'error');
+                return;
+            }
+            document.getElementById('token-panel').innerHTML = tokenView();
+            showMessage('Token guardado en este navegador. Ya puedes buscar películas.', 'ok');
             document.getElementById('query').focus();
+        };
+
+        // Borra el token guardado en el navegador.
+        const clearTokenContr = () => {
+            try { localStorage.removeItem('tmdb_token'); } catch (e) { /* nada que borrar */ }
+            document.getElementById('token-panel').innerHTML = tokenView();
+            document.getElementById('results').innerHTML = '';
+            last_results = [];
+            showMessage('Token eliminado de este navegador.');
+            document.getElementById('token').focus();
         };
 
         // Letras (con tildes, ñ...), números, espacios y signos de puntuación habituales en títulos.
@@ -390,8 +474,8 @@
         const tmdbFetch = async (path) => {
             const token = getToken();
             if (!token)
-                throw new Error('No se ha configurado la clave de la API de TMDb. Copia <code>config.example.js</code> ' +
-                                'como <code>config.js</code> y pega en él tu token de TMDb.');
+                throw new Error('No se ha configurado la clave de la API de TMDb. Pega tu token en el recuadro de arriba ' +
+                                '(o, en local, crea <code>config.js</code> a partir de <code>config.example.js</code>).');
             if (!navigator.onLine)
                 throw new Error('No hay conexión a Internet. Conéctate y vuelve a intentarlo.');
 
@@ -413,8 +497,10 @@
 
             // Códigos de estado del servidor (tema 3.1.2)
             if (response.status === 401)
-                throw new Error('La clave de la API de TMDb no es válida (401 Unauthorized). Revisa el token de <code>config.js</code>: ' +
-                                'debe ser el «Token de acceso de lectura a la API».');
+                throw new Error('La clave de la API de TMDb no es válida (401 Unauthorized). ' +
+                                (tokenSource() === 'local'
+                                    ? 'Pulsa «olvidar token» y pega de nuevo el «Token de acceso de lectura a la API».'
+                                    : 'Revisa el token de <code>config.js</code>: debe ser el «Token de acceso de lectura a la API».'));
             if (response.status === 404)
                 throw new Error('TMDb no ha encontrado el recurso solicitado (404 Not Found).');
             if (response.status === 429)
@@ -533,13 +619,19 @@
             else if (matchEvent(ev, '.search-view'))  searchViewContr ();
             else if (matchEvent(ev, '.search'))       searchContr     (document.getElementById('query').value);
             else if (matchEvent(ev, '.add-from-api')) addFromAPIContr (last_results[myId(ev)], ev.target);
+            else if (matchEvent(ev, '.save-token'))   saveTokenContr  (document.getElementById('token').value);
+            else if (matchEvent(ev, '.clear-token'))  clearTokenContr ();
         })
 
-        // La tecla Enter en el campo de búsqueda también lanza la búsqueda.
+        // La tecla Enter en el campo de búsqueda lanza la búsqueda (y en el del token, lo guarda).
         document.addEventListener('keydown', ev => {
-            if (ev.key === 'Enter' && matchEvent(ev, '#query')) {
+            if (ev.key !== 'Enter') return;
+            if (matchEvent(ev, '#query')) {
                 ev.preventDefault();
                 searchContr(ev.target.value);
+            } else if (matchEvent(ev, '#token')) {
+                ev.preventDefault();
+                saveTokenContr(ev.target.value);
             }
         });
 

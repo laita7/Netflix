@@ -18,6 +18,8 @@ La búsqueda de películas usa la API REST de TMDb, que necesita una clave:
 
 `config.js` está en `.gitignore`, así que la clave no se sube al repositorio. Si falta o no es válida, la vista de búsqueda lo indica con un mensaje.
 
+**Versión publicada (GitHub Pages) o sin `config.js`:** al abrir *Buscar en TMDb* aparece un recuadro para pegar el token. Se guarda solo en el `localStorage` de ese navegador (clave `tmdb_token`), nunca en el repositorio, y se puede borrar con el botón *Olvidar token*. Si existe `config.js`, tiene prioridad y el recuadro no aparece.
+
 ## Funcionalidades
 
 | Acción | Botón | Qué hace |
@@ -33,6 +35,8 @@ La búsqueda de películas usa la API REST de TMDb, que necesita una clave:
 | **Search view** | Buscar en TMDb | Muestra la vista de búsqueda (campo de texto y botón). |
 | **Search** | Buscar / tecla Enter | Valida el texto, consulta la API de TMDb y muestra los resultados. |
 | **Add from API** | Añadir (en cada resultado) | Guarda la película en la lista local, con su director, póster, fecha y sinopsis. |
+| **Save token** | Guardar token / tecla Enter | Guarda en el navegador el token de TMDb pegado (solo si no hay `config.js`). |
+| **Clear token** | Olvidar token | Borra el token guardado en el navegador. |
 
 ## Estructura del proyecto
 
@@ -51,7 +55,7 @@ Todo el código está en `index.html`, dentro de la etiqueta `<script>`:
 
 - **Modelo:** un array de objetos `{ title, director, thumbnail }` guardado como JSON en `localStorage` con la clave `my_movies`. Si la clave no existe, se crea con las películas de `initial_movies`.
 - **Vistas:** `indexView`, `showView`, `newView`, `editView`, `searchView` y `resultsView`. Generan el HTML que se inserta en `<div id="main">`.
-- **Controladores:** `indexContr`, `showContr`, `newContr`, `createContr`, `editContr`, `updateContr`, `deleteContr`, `resetContr`, `searchViewContr`, `searchContr` y `addFromAPIContr`. Leen o modifican el modelo y muestran la vista correspondiente.
+- **Controladores:** `indexContr`, `showContr`, `newContr`, `createContr`, `editContr`, `updateContr`, `deleteContr`, `resetContr`, `searchViewContr`, `searchContr`, `addFromAPIContr`, `saveTokenContr` y `clearTokenContr`. Leen o modifican el modelo y muestran la vista correspondiente.
 - **Router:** un único manejador del evento `click` sobre `document` que comprueba la clase del botón pulsado (`.show`, `.new`, `.search`, `.add-from-api`…) y llama al controlador adecuado. El índice de la película se pasa con el atributo `data-my-id`. Un manejador de `keydown` lanza la búsqueda al pulsar Enter en el campo de búsqueda.
 
 ### Integración con TMDb
