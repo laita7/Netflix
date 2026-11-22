@@ -37,6 +37,11 @@ La búsqueda de películas usa la API REST de TMDb, que necesita una clave:
 | **Add from API** | Añadir (en cada resultado) | Guarda la película en la lista local, con su director, póster, fecha y sinopsis. |
 | **Save token** | Guardar token / tecla Enter | Guarda en el navegador el token de TMDb pegado (solo si no hay `config.js`). |
 | **Clear token** | Olvidar token | Borra el token guardado en el navegador. |
+| **Keywords** | Palabras clave (en cada película y en cada resultado) | Pide a TMDb las palabras clave de la película, las limpia y las muestra ordenadas. |
+| **Add keyword** | Añadir a mi lista | Guarda la palabra clave en la lista personalizada. |
+| **My keywords** | Mis palabras clave | Muestra la lista personalizada. |
+| **Remove keyword** | ✕ (en cada palabra de la lista) | Quita esa palabra clave de la lista. |
+| **Clear keywords** | Vaciar lista | Borra toda la lista personalizada, después de pedir confirmación. |
 
 ## Estructura del proyecto
 
@@ -54,8 +59,9 @@ La búsqueda de películas usa la API REST de TMDb, que necesita una clave:
 Todo el código está en `index.html`, dentro de la etiqueta `<script>`:
 
 - **Modelo:** un array de objetos `{ title, director, thumbnail }` guardado como JSON en `localStorage` con la clave `my_movies`. Si la clave no existe, se crea con las películas de `initial_movies`.
-- **Vistas:** `indexView`, `showView`, `newView`, `editView`, `searchView` y `resultsView`. Generan el HTML que se inserta en `<div id="main">`.
-- **Controladores:** `indexContr`, `showContr`, `newContr`, `createContr`, `editContr`, `updateContr`, `deleteContr`, `resetContr`, `searchViewContr`, `searchContr`, `addFromAPIContr`, `saveTokenContr` y `clearTokenContr`. Leen o modifican el modelo y muestran la vista correspondiente.
+- **Lista personalizada de palabras clave:** un array de objetos `{ keyword, movies, added }` guardado en `localStorage` con la clave `my_keywords`. `movies` indica de qué películas salió cada palabra.
+- **Vistas:** `indexView`, `showView`, `newView`, `editView`, `searchView`, `resultsView`, `keywordsView` y `myKeywordsView`. Generan el HTML que se inserta en `<div id="main">`.
+- **Controladores:** `indexContr`, `showContr`, `newContr`, `createContr`, `editContr`, `updateContr`, `deleteContr`, `resetContr`, `searchViewContr`, `searchContr`, `addFromAPIContr`, `saveTokenContr`, `clearTokenContr`, `keywordsContr`, `addKeywordToList`, `myKeywordsContr`, `removeKeywordFromList`, `clearKeywordsContr` y `backToResultsContr`. Leen o modifican el modelo y muestran la vista correspondiente.
 - **Router:** un único manejador del evento `click` sobre `document` que comprueba la clase del botón pulsado (`.show`, `.new`, `.search`, `.add-from-api`…) y llama al controlador adecuado. El índice de la película se pasa con el atributo `data-my-id`. Un manejador de `keydown` lanza la búsqueda al pulsar Enter en el campo de búsqueda.
 
 ### Integración con TMDb
@@ -66,6 +72,15 @@ Todo el código está en `index.html`, dentro de la etiqueta `<script>`:
 - Antes de añadir, se comprueba si la película ya está en la lista (por `tmdb_id` o, en las creadas a mano, por título) y se avisa en ese caso. El botón se deshabilita mientras se añade para evitar duplicados por doble clic.
 - Los textos que llegan de la API se escapan antes de insertarlos en el HTML.
 - Las tarjetas de resultados usan animaciones y transiciones CSS (`@keyframes`, `transition`, `transform`).
+
+### Palabras clave (Parte 3)
+
+- El botón **palabras clave** está en cada película de la lista y en cada resultado de búsqueda. `keywordsContr` hace `GET /movie/{id}/keywords` con el id de TMDb de la película. Las películas creadas a mano no tienen ese id, así que antes se buscan por su título en TMDb y se usa el primer resultado.
+- `cleanKeyword` normaliza cada palabra con la expresión regular del enunciado: `.replace(/[^a-zñáéíóú0-9 ]+/igm, "").trim().toLowerCase()`, que elimina los caracteres especiales (`(a.i.)` → `ai`), quita los espacios de los extremos y la pasa a minúsculas.
+- `processKeywords` recorre con un bucle `for...of` el array `[{ id, name }]` que devuelve la API, limpia cada palabra, descarta las vacías y las repetidas y devuelve la lista ordenada alfabéticamente (`localeCompare`).
+- En `keywordsView` cada palabra tiene su botón **Añadir a mi lista**. Las que ya están en la lista aparecen marcadas y con el botón desactivado.
+- `addKeywordToList` no guarda duplicados: si la palabra ya estaba, solo añade la película a su lista de origen.
+- Desde las palabras clave de un resultado de búsqueda se puede **volver a los resultados** sin repetir la búsqueda.
 
 ## Notas
 

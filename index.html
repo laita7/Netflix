@@ -83,6 +83,27 @@
         /* Detalle (show) de películas añadidas desde TMDb */
         p.overview {max-width: 600px; color: #444; line-height: 1.5;}
 
+        /* ---------- PALABRAS CLAVE ---------- */
+        div.result div.actions {display: flex; flex-direction: column; gap: 4px;}
+        div.result button.keywords {width: 100%; height: 26px; font-size: 10px; margin: 0;}
+        div.result button.add-from-api {margin: 0;}
+        div.kw-header {display: flex; gap: 14px; align-items: flex-start; margin-bottom: 4px;}
+        img.kw-poster {width: 80px; aspect-ratio: 2 / 3; object-fit: cover; box-shadow: 2px 2px 7px #ccc; flex-shrink: 0;}
+        p.empty {font-size: 13px; color: #555; padding: 12px; background: #fafafa; border: 1px dashed #ccc; max-width: 600px;}
+
+        /* Cada palabra clave es una "etiqueta" que aparece escalonada (animation-delay) */
+        ul.kw-list {list-style: none; padding: 0; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 8px;}
+        ul.kw-list li {display: flex; align-items: center; gap: 8px; padding: 3px 3px 3px 12px; font-size: 13px;
+                       border: 1px solid #d1c4e9; border-radius: 16px; background: white;
+                       animation: fadeUp 0.3s ease-out backwards;
+                       transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;}
+        ul.kw-list li:hover {border-color: var(--primary); transform: translateY(-2px);}
+        ul.kw-list li.in-list {background: #f3ecff; border-color: #b39ddb;}
+        ul.kw-list li button {margin: 0; height: 22px; border-radius: 11px;}
+        ul.kw-list.mine li {padding: 6px 4px 6px 14px;}
+        ul.kw-list.mine li button {width: 22px; padding: 0; font-size: 11px;}
+        small.kw-movies {display: block; font-size: 10px; color: #888;}
+
         @keyframes fadeIn {from {opacity: 0;} to {opacity: 1;}}
         @keyframes fadeUp {from {opacity: 0; transform: translateY(12px);} to {opacity: 1; transform: translateY(0);}}
         @keyframes spin   {to {transform: rotate(360deg);}}
@@ -165,6 +186,51 @@
               normalize(m.title) === normalize(movie.original_title));
 
 
+        // PALABRAS CLAVE: MODELO Y PROCESAMIENTO
+
+        // Último término buscado, para poder volver a los resultados desde las palabras clave.
+        let last_query = '';
+
+        // Película cuyas palabras clave se están viendo: { id, title }.
+        let current_movie = null;
+
+        // Lista personalizada guardada en localStorage (clave my_keywords):
+        // [{ keyword: 'time travel', movies: ['Interstellar'], added: '2026-11-22T...' }, ...]
+        const getMyKeywords = () => {
+            try {
+                const list = JSON.parse(localStorage.my_keywords || '[]');
+                return Array.isArray(list) ? list.filter(e => e && typeof e.keyword === 'string') : [];
+            } catch (e) {
+                return [];
+            }
+        };
+
+        const saveMyKeywords = (list) => {
+            localStorage.my_keywords = JSON.stringify(list);
+        };
+
+        // Limpia una palabra clave con la expresión regular del enunciado:
+        //  1. elimina todo lo que no sea letra, número o espacio (puntos, guiones, paréntesis...),
+        //  2. quita los espacios de los extremos,
+        //  3. pasa a minúsculas (evita duplicados como "Space" y "space").
+        const cleanKeyword = (keyword) => String(keyword ?? '')
+            .replace(/[^a-zñáéíóú0-9 ]+/igm, "")
+            .trim()
+            .toLowerCase();
+
+        // Recorre el array de palabras clave de la API ([{ id, name }, ...]), las limpia,
+        // descarta las vacías o repetidas y devuelve un array de strings ordenado alfabéticamente.
+        const processKeywords = (keywords) => {
+            const list = [];
+            for (const item of (Array.isArray(keywords) ? keywords : [])) {
+                const keyword = cleanKeyword(typeof item === 'string' ? item : item && item.name);
+                if (keyword === '') continue;              // vacía tras limpiarla (p. ej. "!!")
+                if (!list.includes(keyword)) list.push(keyword);
+            }
+            return list.sort((a, b) => a.localeCompare(b, 'es'));
+        };
+
+
         // VIEWS
         const indexView = (movies) => {
             let i=0;
@@ -174,7 +240,7 @@
               view += `
                 <div class="movie">
                    <div class="movie-img">
-                        <img data-my-id="${i}" src="${movies[i].thumbnail}" onerror="this.src='files/noimage.png'"/>
+                        <img data-my-id="${i}" src="${movies[i].thumbnail}" onerror="this.onerror=null; this.src='files/noimage.png'"/>
                    </div>
                    <div class="title">
                        ${movies[i].title || "<em>Sin título</em>"}
@@ -183,6 +249,7 @@
                        <button class="show" data-my-id="${i}">ver</button>
                        <button class="edit" data-my-id="${i}">editar</button>
                        <button class="delete" data-my-id="${i}">borrar</button>
+                       <button class="keywords" data-my-id="${i}">palabras clave</button>
                     </div>
                 </div>\n`;
               i = i + 1;
@@ -191,6 +258,7 @@
             view += `<div class="actions">
                         <button class="new">añadir</button>
                         <button class="search-view">buscar en TMDb</button>
+                        <button class="my-keywords">mis palabras clave</button>
                         <button class="reset">restablecer</button>
                     </div>`;
 
@@ -333,11 +401,98 @@
                     </div>
                     <div class="actions">
                         <button class="add-from-api" data-my-id="${i}">añadir</button>
+                        <button class="keywords" data-result-id="${i}">palabras clave</button>
                     </div>
                 </div>`;
             });
 
             return view + `</div>`;
+        };
+
+
+        // Vista de palabras clave de una película: cabecera con póster y título, y una
+        // lista ordenada de palabras clave, cada una con su botón "Añadir a mi lista".
+        const keywordsView = (movieId, movie, keywords) => {
+            const saved = getMyKeywords().map(e => e.keyword);
+            const year  = movie.release_date ? ` (${movie.release_date.slice(0, 4)})` : '';
+            const back  = movie.origin === 'search'
+                ? `<button class="back-results">volver a los resultados</button>` : '';
+
+            let list = '';
+            if (keywords.length === 0) {
+                list = `<p class="empty">TMDb no tiene palabras clave para esta película.</p>`;
+            } else {
+                list = `<ul class="kw-list">`;
+                keywords.forEach((keyword, i) => {
+                    const inList = saved.includes(keyword);
+                    list += `
+                    <li class="${inList ? 'in-list' : ''}" style="animation-delay: ${Math.min(i, 20) * 25}ms">
+                        <span>${escapeHTML(keyword)}</span>
+                        <button class="add-keyword" data-keyword="${escapeHTML(keyword)}" ${inList ? 'disabled' : ''}>
+                            ${inList ? 'en mi lista ✓' : 'añadir a mi lista'}
+                        </button>
+                    </li>`;
+                });
+                list += `</ul>`;
+            }
+
+            return `<div class="kw-header" data-movie-id="${movieId}">
+                    <img class="kw-poster" src="${movie.poster}" alt="Póster de ${escapeHTML(movie.title)}"
+                         onerror="this.onerror=null; this.src='files/noimage.png'">
+                    <div>
+                        <h2>Palabras clave de «${escapeHTML(movie.title)}»${year}</h2>
+                        <p class="hint">
+                            ${keywords.length} palabra${keywords.length === 1 ? '' : 's'} clave obtenida${keywords.length === 1 ? '' : 's'} de TMDb,
+                            normalizadas y ordenadas alfabéticamente. Añade las que te interesen a tu lista personalizada.
+                        </p>
+                    </div>
+                </div>
+                <div id="message" role="status" aria-live="polite"></div>
+                ${list}
+                <div class="actions">
+                    ${back}
+                    <button class="my-keywords">mis palabras clave (${saved.length})</button>
+                    <button class="index">volver a mis películas</button>
+                </div>`;
+        };
+
+
+        // Vista de la lista personalizada de palabras clave, con botón para quitar cada una.
+        const myKeywordsView = (list) => {
+            const sorted = [...list].sort((a, b) => a.keyword.localeCompare(b.keyword, 'es'));
+
+            let view = `<h2>Mis palabras clave</h2>
+                <div id="message" role="status" aria-live="polite"></div>`;
+
+            if (sorted.length === 0) {
+                view += `<p class="empty">
+                    Tu lista está vacía. Pulsa <b>palabras clave</b> en una de tus películas o en un resultado
+                    de búsqueda y añade las que te interesen.
+                </p>`;
+            } else {
+                view += `<p class="hint">${sorted.length} palabra${sorted.length === 1 ? '' : 's'} clave guardada${sorted.length === 1 ? '' : 's'}.</p>
+                    <ul class="kw-list mine">`;
+                for (let i = 0; i < sorted.length; i++) {
+                    const entry  = sorted[i];
+                    const movies = (entry.movies || []).map(escapeHTML).join(', ');
+                    view += `
+                    <li style="animation-delay: ${Math.min(i, 20) * 25}ms">
+                        <span>
+                            ${escapeHTML(entry.keyword)}
+                            ${movies ? `<small class="kw-movies">de ${movies}</small>` : ''}
+                        </span>
+                        <button class="remove-keyword" data-keyword="${escapeHTML(entry.keyword)}"
+                                title="Quitar de mi lista" aria-label="Quitar ${escapeHTML(entry.keyword)}">✕</button>
+                    </li>`;
+                }
+                view += `</ul>`;
+            }
+
+            return view + `
+                <div class="actions">
+                    ${sorted.length ? '<button class="clear-keywords">vaciar lista</button>' : ''}
+                    <button class="index">volver a mis películas</button>
+                </div>`;
         };
 
 
@@ -517,6 +672,7 @@
             const button  = document.querySelector('button.search');
             try {
                 const q = validateQuery(query);
+                last_query = q;
 
                 if (button) button.disabled = true;
                 results.innerHTML = '';
@@ -603,6 +759,138 @@
         };
 
 
+        // CONTROLLERS: PALABRAS CLAVE
+
+        // Datos de la película sobre la que se ha pulsado "palabras clave":
+        // un resultado de búsqueda (data-result-id) o una película de mi lista (data-my-id).
+        const keywordsTarget = (ev) => {
+            const data = ev.target.dataset;
+            if (data.resultId !== undefined) {
+                const r = last_results[Number(data.resultId)];
+                return r && { id: r.id, title: r.title, release_date: r.release_date,
+                              poster: posterURL(r.poster_path), origin: 'search' };
+            }
+            const m = JSON.parse(localStorage.my_movies)[myId(ev)];
+            return m && { id: m.tmdb_id, title: m.title, release_date: m.release_date,
+                          poster: m.thumbnail || 'files/noimage.png', origin: 'index' };
+        };
+
+        // Pide a TMDb las palabras clave de una película (GET /movie/{id}/keywords),
+        // las procesa con processKeywords y las muestra con keywordsView.
+        const keywordsContr = async (movie) => {
+            const main = document.getElementById('main');
+            if (!movie || (!movie.id && !String(movie.title || '').trim())) {
+                main.innerHTML = `<h2>Palabras clave</h2><div id="message"></div>
+                    <div class="actions"><button class="index">volver a mis películas</button></div>`;
+                showMessage('No se ha podido identificar la película.', 'error');
+                return;
+            }
+
+            const back = movie.origin === 'search' ? `<button class="back-results">volver a los resultados</button>` : '';
+            main.innerHTML = `<h2>Palabras clave</h2>
+                <div id="message" class="kw-loading" role="status" aria-live="polite"></div>
+                <div class="actions">${back}<button class="index">volver a mis películas</button></div>`;
+            const loading = main.querySelector('.kw-loading');
+            showMessage(`<span class="spinner"></span>Obteniendo las palabras clave de «${escapeHTML(movie.title)}»…`);
+
+            try {
+                let id   = movie.id;
+                let info = movie;
+
+                // Las películas creadas a mano no tienen id de TMDb: se busca por el título
+                // y se usa el primer resultado.
+                if (!id) {
+                    const found = (await tmdbFetch(`/search/movie?query=${encodeURIComponent(movie.title.trim())}` +
+                                                   `&language=es-ES&include_adult=false&page=1`)).results?.[0];
+                    if (!found)
+                        throw new Error(`No se ha encontrado «${escapeHTML(movie.title)}» en TMDb, así que no se pueden obtener sus palabras clave.`);
+                    id   = found.id;
+                    info = { ...movie, release_date: movie.release_date || found.release_date };
+                }
+
+                const data     = await tmdbFetch(`/movie/${id}/keywords`);
+                const keywords = processKeywords(data.keywords);
+
+                if (!loading.isConnected) return;   // el usuario ya se ha ido a otra vista
+                current_movie = { id, title: info.title };
+                main.innerHTML = keywordsView(id, info, keywords);
+            } catch (err) {
+                if (!loading.isConnected) return;
+                const fix = tokenSource() === '' ? ' <button class="search-view">introducir token</button>' : '';
+                showMessage(err.message + fix, 'error');
+                console.error(err);
+            }
+        };
+
+        // Añade una palabra clave a la lista personalizada (localStorage, clave my_keywords).
+        const addKeywordToList = (keyword, button) => {
+            const kw = cleanKeyword(keyword);
+            if (kw.length < 2) {
+                showMessage('Esa palabra clave no es válida.', 'error');
+                return;
+            }
+            try {
+                const list  = getMyKeywords();
+                const title = current_movie && current_movie.title;
+                const entry = list.find(e => e.keyword === kw);
+
+                if (entry) {
+                    // Ya estaba: solo se apunta de qué película viene también.
+                    entry.movies = Array.isArray(entry.movies) ? entry.movies : [];
+                    if (title && !entry.movies.includes(title)) entry.movies.push(title);
+                    saveMyKeywords(list);
+                    showMessage(`«${escapeHTML(kw)}» ya estaba en tu lista.`);
+                } else {
+                    list.push({ keyword: kw, movies: title ? [title] : [], added: new Date().toISOString() });
+                    saveMyKeywords(list);
+                    showMessage(`«${escapeHTML(kw)}» se ha añadido a tu lista. ` +
+                                `<button class="my-keywords">ver mi lista</button>`, 'ok');
+                }
+
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = 'en mi lista ✓';
+                    button.parentElement.classList.add('in-list');
+                }
+                const counter = document.querySelector('div.actions .my-keywords');
+                if (counter) counter.textContent = `mis palabras clave (${list.length})`;
+            } catch (err) {
+                showMessage('No se ha podido guardar la palabra clave en este navegador.', 'error');
+                console.error(err);
+            }
+        };
+
+        // Muestra la lista personalizada de palabras clave.
+        const myKeywordsContr = () => {
+            document.getElementById('main').innerHTML = myKeywordsView(getMyKeywords());
+        };
+
+        // Quita una palabra clave de la lista personalizada.
+        const removeKeywordFromList = (keyword) => {
+            saveMyKeywords(getMyKeywords().filter(e => e.keyword !== keyword));
+            myKeywordsContr();
+            showMessage(`«${escapeHTML(keyword)}» se ha quitado de tu lista.`, 'ok');
+        };
+
+        // Vacía la lista personalizada, después de pedir confirmación.
+        const clearKeywordsContr = () => {
+            if (!confirm('¿Quieres borrar todas tus palabras clave?')) return;
+            saveMyKeywords([]);
+            myKeywordsContr();
+            showMessage('Tu lista de palabras clave se ha vaciado.', 'ok');
+        };
+
+        // Vuelve a la vista de búsqueda con los últimos resultados.
+        const backToResultsContr = () => {
+            document.getElementById('main').innerHTML = searchView();
+            document.getElementById('query').value = last_query;
+            if (last_results.length > 0) {
+                document.getElementById('results').innerHTML = resultsView(last_results);
+                showMessage(`Resultados para «${escapeHTML(last_query)}».`, 'ok');
+            }
+        };
+
+
         // EVENT ROUTER
         const matchEvent = (ev, sel) => ev.target.matches(sel);
         const myId = (ev) => Number(ev.target.dataset.myId);
@@ -621,6 +909,12 @@
             else if (matchEvent(ev, '.add-from-api')) addFromAPIContr (last_results[myId(ev)], ev.target);
             else if (matchEvent(ev, '.save-token'))   saveTokenContr  (document.getElementById('token').value);
             else if (matchEvent(ev, '.clear-token'))  clearTokenContr ();
+            else if (matchEvent(ev, '.keywords'))       keywordsContr         (keywordsTarget(ev));
+            else if (matchEvent(ev, '.add-keyword'))    addKeywordToList      (ev.target.dataset.keyword, ev.target);
+            else if (matchEvent(ev, '.my-keywords'))    myKeywordsContr       ();
+            else if (matchEvent(ev, '.remove-keyword')) removeKeywordFromList (ev.target.dataset.keyword);
+            else if (matchEvent(ev, '.clear-keywords')) clearKeywordsContr    ();
+            else if (matchEvent(ev, '.back-results'))   backToResultsContr    ();
         })
 
         // La tecla Enter en el campo de búsqueda lanza la búsqueda (y en el del token, lo guarda).
